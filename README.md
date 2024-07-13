@@ -8,3 +8,6 @@ The script "polynomial_bandwidth_snr_wifi.py" is used to get the polynomial appr
 Polynomials of degree 2, 5 and 10 are good approximations in my opinion.
 
 Main program in "throughput_over_distance.py".
+
+Example output:
+![Output](./example1.png)
