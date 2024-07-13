@@ -2,6 +2,7 @@ from math import pi, log2, log10, pow
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Utility functions
 def absolute_to_dB(value):
     return 10 * log10(value)
 
@@ -14,9 +15,11 @@ def W_to_dBm(W):
 def dBm_to_W(dBm):
     return dB_to_absolute(dBm - 30)
 
+# Class for wireless parameters
 class WirelessParams:
-    def __init__(self, tx_power_dBm, bandwidth_Hz, temperature_K, frequency_Hz, 
-                 number_of_transmit_antennas, number_of_receive_antennas, other_rf_noise_dBm, receiver_losses_dB):
+    def __init__(self, tx_power_dBm=20, bandwidth_Hz=20e6, temperature_K=290, frequency_Hz=2.4e9, 
+                 number_of_transmit_antennas=1, number_of_receive_antennas=1, other_rf_noise_dBm=-95, 
+                 receiver_losses_dB=25, wall_loss_dB=0):
         self.tx_power_dBm = tx_power_dBm
         self.bandwidth_Hz = bandwidth_Hz
         self.temperature_K = temperature_K
@@ -25,6 +28,7 @@ class WirelessParams:
         self.number_of_receive_antennas = number_of_receive_antennas
         self.other_rf_noise_dBm = other_rf_noise_dBm
         self.receiver_losses_dB = receiver_losses_dB
+        self.wall_loss_dB = wall_loss_dB
         
         self.speed_of_light = 3e8  # Speed of light in m/s
         self.boltzmann_constant = 1.38e-23
@@ -34,24 +38,13 @@ class WirelessParams:
         self.noise_level_dBm = W_to_dBm(self.thermal_noise_W)
         self.total_noise_dBm = W_to_dBm(dBm_to_W(self.noise_level_dBm) + dBm_to_W(other_rf_noise_dBm))
 
+# Polynomial formula for throughput calculation
 def polynomial_formula(BW, SNR_dB):
-    return (2.4775878e+01 - 1.0209642e+00 * BW - 1.0301549e+00 * SNR_dB - 4.7138541e-03 * BW**2 +
-            1.8121958e-01 * BW * SNR_dB + 1.0329859e-02 * SNR_dB**2)
-
-# Parameters
-params = WirelessParams(
-    tx_power_dBm=20,
-    bandwidth_Hz=20e6,
-    temperature_K=290,
-    frequency_Hz=2.4e9,
-    number_of_transmit_antennas=1,
-    number_of_receive_antennas=1,
-    other_rf_noise_dBm=-95,
-    receiver_losses_dB=25
-)
-
-# Distance range (in meters)
-distances = range(1, 101)
+    return ( -2.3328149e+01-2.4910219e-09*BW+5.9596095e-04*SNR_dB-1.6030769e-08*BW**2+9.5333136e-03*BW*SNR_dB
+            -2.6536985e-02*SNR_dB**2-6.4408110e-07*BW**3+1.0886969e-01*BW**2*SNR_dB-3.0310919e-01*BW*SNR_dB**2
+            +2.6790413e-01*SNR_dB**3-1.8400823e-05*BW**4-3.2985096e-03*BW**3*SNR_dB+6.8250356e-03*BW**2*SNR_dB**2
+            +1.6734471e-03*BW*SNR_dB**3-9.7540191e-03*SNR_dB**4+1.9652095e-07*BW**5+2.5496150e-05*BW**4*SNR_dB
+            -5.1368460e-05*BW**3*SNR_dB**2+8.8503436e-06*BW**2*SNR_dB**3-3.9838122e-05*BW*SNR_dB**4+1.3092017e-04*SNR_dB**5 )
 
 def calculate_fspl_dB(params, distance):
     return 20 * log10(distance) + 20 * log10(params.frequency_Hz) - 147.55
@@ -59,9 +52,14 @@ def calculate_fspl_dB(params, distance):
 def calculate_distance_from_path_loss(params, fspl_dB):
     return pow(10, (fspl_dB + 147.55 - 20 * log10(params.frequency_Hz)) / 20)
 
-def calculate_snr(params, distance):
+def calculate_total_path_loss(params, distance):
     fspl_dB = calculate_fspl_dB(params, distance)
-    rx_power_dBm = params.tx_power_dBm - fspl_dB + params.beamforming_gain_dB - params.receiver_losses_dB
+    total_path_loss_dB = fspl_dB + params.wall_loss_dB
+    return total_path_loss_dB
+
+def calculate_snr(params, distance):
+    total_path_loss_dB = calculate_total_path_loss(params, distance)
+    rx_power_dBm = params.tx_power_dBm - total_path_loss_dB + params.beamforming_gain_dB - params.receiver_losses_dB
     rx_power_W = dBm_to_W(rx_power_dBm)
     snr_linear = rx_power_W / (dBm_to_W(params.total_noise_dBm))
     snr_dB = absolute_to_dB(snr_linear)
@@ -72,7 +70,8 @@ def calculate_distance(params, snr_dB):
     rx_power_W = snr_linear * dBm_to_W(params.total_noise_dBm)
     rx_power_dBm = W_to_dBm(rx_power_W)
     fspl_dB = params.tx_power_dBm - rx_power_dBm + params.beamforming_gain_dB - params.receiver_losses_dB
-    distance = calculate_distance_from_path_loss(params, fspl_dB)
+    total_path_loss_dB = fspl_dB + params.wall_loss_dB
+    distance = calculate_distance_from_path_loss(params, total_path_loss_dB - params.wall_loss_dB)
     return distance
 
 def calculate_throughput(params, distance):
@@ -89,34 +88,79 @@ def calculate_throughput(params, distance):
     
     return capacity_Mbps
 
-# Print noise level in dBm
-print(f"Thermal noise level: {params.noise_level_dBm:.2f} dBm")
-print(f"Total noise level: {params.total_noise_dBm:.2f} dBm")
+# Function to initialize wall configurations
+def initialize_wall_config(wall_config):
+    wall_attenuations = {
+        "Drywall": 3,
+        "Bookshelf": 2,
+        "Exterior Glass": 3,
+        "Solid Wood Door": 6,
+        "Marble": 6,
+        "Brick": 10,
+        "Concrete": 12,
+        "Elevator Shaft": 30
+    }
+    
+    total_wall_loss_dB = sum(wall_config[wall] * wall_attenuations[wall] for wall in wall_config)
+    return total_wall_loss_dB
 
-# Calculate throughput and SNR for each distance
-throughputs = [calculate_throughput(params, d) for d in distances]
-snrs_dB = [calculate_snr(params, d) for d in distances]
+# Main function
+def main():
+    wall_config = {
+        "Drywall": 1,
+        "Bookshelf": 0,
+        "Exterior Glass": 0,
+        "Solid Wood Door": 0,
+        "Marble": 0,
+        "Brick": 0,
+        "Concrete": 0,
+        "Elevator Shaft": 0
+    }
+    
+    total_wall_loss_dB = initialize_wall_config(wall_config)
+    
+    params = WirelessParams(
+        tx_power_dBm=20,
+        bandwidth_Hz=20e6,
+        temperature_K=290,
+        frequency_Hz=2.4e9,
+        number_of_transmit_antennas=1,
+        number_of_receive_antennas=1,
+        other_rf_noise_dBm=-95,
+        receiver_losses_dB=25,
+        wall_loss_dB=total_wall_loss_dB
+    )
+    
+    distances = range(2, 101)
+    
+    throughputs = [calculate_throughput(params, d) for d in distances]
+    snrs_dB = [calculate_snr(params, d) for d in distances]
+    
+    # Variable to toggle polynomial throughput display
+    display_polynomial = False
+    if display_polynomial:
+        poly_throughputs = [polynomial_formula(params.bandwidth_Hz / 1e6, snr_dB) for snr_dB in snrs_dB]
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(distances, throughputs, label='TCP Throughput')
+    if display_polynomial:
+        plt.plot(distances, poly_throughputs, 'r-', label='Polynomial Formula')
+    plt.xlabel('Distance (meters)')
+    plt.ylabel('Throughput (Mbit/s)')
+    plt.title('Throughput vs. Distance')
+    plt.ylim(bottom=0)
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+    
+    for distance in distances:
+        if distance % 10 == 0:
+            total_path_loss_dB = calculate_total_path_loss(params, distance)
+            rx_power_dBm = params.tx_power_dBm - total_path_loss_dB + params.beamforming_gain_dB - params.receiver_losses_dB
+            rx_power_W = dBm_to_W(rx_power_dBm)
+            snr_linear = rx_power_W / dBm_to_W(params.total_noise_dBm)
+            snr_dB = absolute_to_dB(snr_linear)
+            print(f"Distance: {distance} m, Total Path Loss: {total_path_loss_dB:.2f} dB, RX Power: {rx_power_dBm:.2f} dBm, SNR: {snr_dB:.2f} dB")
 
-# Calculate polynomial formula throughput
-poly_throughputs = [polynomial_formula(params.bandwidth_Hz / 1e6, snr_dB) for snr_dB in snrs_dB]
-
-# Plot the graph
-plt.figure(figsize=(10, 6))
-plt.plot(distances, throughputs, label='Theoretical Throughput')
-plt.plot(distances, poly_throughputs, 'r-', label='Polynomial Formula')
-plt.xlabel('Distance (meters)')
-plt.ylabel('Throughput (Mbit/s)')
-plt.title('Throughput vs. Distance')
-plt.ylim(bottom=0)
-plt.grid(True)
-plt.legend()
-plt.show()
-
-for distance in distances:
-    if distance % 10 == 0:
-        fspl_dB = calculate_fspl_dB(params, distance)
-        rx_power_dBm = params.tx_power_dBm - fspl_dB + params.beamforming_gain_dB - params.receiver_losses_dB
-        rx_power_W = dBm_to_W(rx_power_dBm)
-        snr_linear = rx_power_W / dBm_to_W(params.total_noise_dBm)
-        snr_dB = absolute_to_dB(snr_linear)
-        print(f"Distance: {distance} m, FSPL: {fspl_dB:.2f} dB, RX Power: {rx_power_dBm:.2f} dBm, SNR: {snr_dB:.2f} dB")
+if __name__ == "__main__":
+    main()
